@@ -15,11 +15,14 @@ import java.security.KeyManagementException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateException;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.*;
 
 public class Main {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+
     /**
      * See ConnectionFactoryProvider
      *
@@ -28,7 +31,7 @@ public class Main {
      */
     public static void main(String[] args) throws JMSException, CertificateException, NamingException, NoSuchAlgorithmException, KeyStoreException, IOException, KeyManagementException {
 
-        String node = "localhost"; // "10.0.150.191";
+        String node = "localhost";
         boolean security = false;
 
         if (args != null && args.length > 0) {
@@ -36,6 +39,26 @@ public class Main {
         }
 
         Main messagingClient = new Main();
+
+        LocalDateTime start = LocalDateTime.now();
+        int numMessages = 1000;
+        messagingClient.send(
+                node,
+                "remoteclient",
+                "redhat",
+                Paths.get("/tmp/client.ts"),
+                "redhat",
+                "jms/RemoteConnectionFactoryPublicIP",
+                "remoteclient",
+                "redhat",
+                "jms/queue/myQueue1",
+                numMessages
+        );
+        LocalDateTime end = LocalDateTime.now();
+        Duration duration = Duration.between(start, end);
+        System.out.println("Sent " + numMessages + " messages in " + duration.getSeconds() + " seconds");
+
+        if (true) return;
 
         if (security) {
             messagingClient.messageSender(node, 8443,
@@ -86,6 +109,40 @@ public class Main {
         }
     }
 
+    public void send(
+            String ec2InstancePublicIP, // 54.242.176.163
+            String remoteUser,
+            String remotePassword,
+            Path clientTrustStore,
+            String trustStorePassword,
+            String factoryName,
+            String brokerUser,
+            String brokerPassword,
+            String queueName,
+            int numMessages
+    ) throws NamingException, JMSException {
+        Properties properties = new Properties();
+        properties.put(Context.INITIAL_CONTEXT_FACTORY, "org.wildfly.naming.client.WildFlyInitialContextFactory");
+        properties.put(Context.PROVIDER_URL, String.format("remote+https://%s:%d", ec2InstancePublicIP, 8443));
+        properties.put(Context.SECURITY_PRINCIPAL, remoteUser);
+        properties.put(Context.SECURITY_CREDENTIALS, remotePassword);
+        System.setProperty("javax.net.ssl.trustStore", clientTrustStore.toFile().getAbsolutePath());
+        System.setProperty("javax.net.ssl.trustStorePassword", trustStorePassword);
+        System.setProperty("javax.net.ssl.trustStoreType", "jks");
+        InitialContext context = new InitialContext(properties);
+        ConnectionFactory cf = (ConnectionFactory) context.lookup(factoryName);
+        Connection connection = cf.createConnection(brokerUser, brokerPassword);
+        connection.start();
+        Session session = connection.createSession();
+        Queue queue = (Queue) context.lookup(queueName);
+        MessageProducer producer = session.createProducer(queue);
+        for (int i = 0; i < numMessages; i++) {
+            producer.send(session.createTextMessage("Message body " + i));
+        }
+        producer.close();
+        session.close();
+    }
+
     public void messageSender(String host, Integer port,
                               String remoteUser,
                               String remotePassword,
@@ -108,12 +165,12 @@ public class Main {
         LOGGER.info(new Date() + "Send messages \"" + messageBody + "\" ...");
         MessageProducer producer = session.createProducer(queue);
 
-        System.out.println(new Date() + " - Sending "+numMessages+" messages ...");
+        System.out.println(new Date() + " - Sending " + numMessages + " messages ...");
         for (int i = 0; i < numMessages; i++) {
             producer.send(session.createTextMessage(messageBody + i));
             //System.out.println(new Date() + " Sent message with body \"" + messageBody + "\" ...");
         }
-        System.out.println(new Date() + " - Sent "+numMessages+" messages.");
+        System.out.println(new Date() + " - Sent " + numMessages + " messages.");
 
         producer.close();
         session.close();
@@ -149,7 +206,7 @@ public class Main {
             //System.out.println(new Date() + " Received message with body \"" + message.getBody(String.class) + "\" ...");
             message = consumer.receive(1000);
         }
-        System.out.println(new Date() + " - Received "+numMessages+" messages.");
+        System.out.println(new Date() + " - Received " + numMessages + " messages.");
 
         consumer.close();
         session.close();
